@@ -1,0 +1,148 @@
+name: Receive and Release (Public Distribution)
+
+# This workflow runs in the PUBLIC vantavoice repository
+
+on:
+  repository_dispatch:
+    types: [publish-public-dist]
+
+permissions:
+  contents: write    # allow creating releases and uploading assets
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      # === CHECKOUT REPOSITORY ===
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # === DOWNLOAD VELOPACK ARTIFACTS FROM GAMERASSIST ===
+      - name: Download Velopack artifacts from GamerAssist
+        uses: dawidd6/action-download-artifact@v3
+        with:
+          repo: drvmukhin/GamerAssist
+          github_token: ${{ secrets.DIST_PAT }}
+          run_id: ${{ github.event.client_payload.run_id }}
+          name: ${{ github.event.client_payload.velopack_artifact }}
+          path: incoming
+
+      - name: List downloaded Velopack files
+        run: |
+          Write-Host "=== Downloaded Velopack Artifacts ==="
+          Get-ChildItem incoming -Recurse | ForEach-Object { 
+            Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1MB, 2)) MB" 
+          }
+
+      # === PREPARE RELEASE NOTES ===
+      - name: Prepare release notes
+        id: notes
+        run: |
+          $version = "${{ github.event.client_payload.tag }}"
+          $setupSize = "${{ github.event.client_payload.setup_size }}"
+          
+          $notes = @"
+          ## VantaVoice $version - Windows Installer
+          
+          ### Quick Install
+          
+          1. Download **Setup.exe** below
+          2. Run it - the installer will download and install VantaVoice
+          3. Launch from Start Menu or Desktop shortcut
+          
+          ### Downloads
+          
+          | File | Description | Size |
+          |------|-------------|------|
+          | **Setup.exe** | Windows Installer (recommended) | $setupSize |
+          
+          ### System Requirements
+          
+          - **OS**: Windows 10/11 (64-bit)
+          - **RAM**: 4GB minimum
+          - **Storage**: ~200MB
+          
+          ### Auto-Updates
+          
+          VantaVoice automatically checks for updates and notifies you when a new version is available.
+          
+          ---
+          
+          *This is an automated release from the VantaVoice build system.*
+          "@
+          
+          # Save to file for the release action
+          $notes | Out-File -FilePath release_notes.md -Encoding utf8
+          Write-Host "Release notes prepared"
+
+      # === CREATE GITHUB RELEASE ===
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.client_payload.tag }}
+          name: "VantaVoice ${{ github.event.client_payload.tag }}"
+          body_path: release_notes.md
+          prerelease: false
+          make_latest: true
+          files: |
+            incoming/Setup.exe
+            incoming/*.nupkg
+            incoming/RELEASES
+
+      # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
+      - name: Update downloads directory
+        run: |
+          # Create downloads directory if it doesn't exist
+          New-Item -ItemType Directory -Force -Path "downloads"
+          
+          # Copy latest files to downloads directory
+          Copy-Item "incoming/Setup.exe" -Destination "downloads/Setup.exe" -Force
+          Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
+          
+          # Copy all nupkg files
+          Get-ChildItem "incoming/*.nupkg" | ForEach-Object {
+            Copy-Item $_.FullName -Destination "downloads/$($_.Name)" -Force
+          }
+          
+          # Create a version file for reference
+          "${{ github.event.client_payload.tag }}" | Out-File -FilePath "downloads/LATEST_VERSION" -Encoding utf8
+          
+          Write-Host "=== Downloads directory updated ==="
+          Get-ChildItem downloads | ForEach-Object { Write-Host "  $($_.Name)" }
+
+      - name: Commit downloads to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          
+          git add downloads/
+          
+          # Check if there are changes to commit
+          $changes = git status --porcelain
+          if ($changes) {
+            git commit -m "Update downloads to ${{ github.event.client_payload.tag }}"
+            git push
+            Write-Host "Downloads committed and pushed"
+          } else {
+            Write-Host "No changes to commit"
+          }
+
+      - name: Summary
+        run: |
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "  RELEASE PUBLISHED SUCCESSFULLY"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "Version: ${{ github.event.client_payload.tag }}"
+          Write-Host ""
+          Write-Host "Download URLs:"
+          Write-Host "  - GitHub Release: https://github.com/drvmukhin/vantavoice/releases/tag/${{ github.event.client_payload.tag }}"
+          Write-Host "  - Direct Setup.exe: https://github.com/drvmukhin/vantavoice/releases/download/${{ github.event.client_payload.tag }}/Setup.exe"
+          Write-Host ""
+          Write-Host "Raw downloads (for Velopack):"
+          Write-Host "  - https://raw.githubusercontent.com/drvmukhin/vantavoice/main/downloads/RELEASES"
+          Write-Host ""
