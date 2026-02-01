@@ -1,6 +1,8 @@
 name: Receive and Release (Public Distribution)
 
 # This workflow runs in the PUBLIC vantavoice repository
+# It receives Velopack distribution artifacts from the private GamerAssist repo
+# and publishes them for public download and auto-updates
 
 on:
   repository_dispatch:
@@ -49,7 +51,7 @@ jobs:
           
           ### Quick Install
           
-          1. Download **Setup.exe** below
+          1. Download **VantaVoice-win-Setup.exe** below
           2. Run it - the installer will download and install VantaVoice
           3. Launch from Start Menu or Desktop shortcut
           
@@ -57,7 +59,7 @@ jobs:
           
           | File | Description | Size |
           |------|-------------|------|
-          | **Setup.exe** | Windows Installer (recommended) | $setupSize |
+          | **VantaVoice-win-Setup.exe** | Windows Installer (recommended) | $setupSize |
           
           ### System Requirements
           
@@ -88,7 +90,7 @@ jobs:
           prerelease: false
           make_latest: true
           files: |
-            incoming/Setup.exe
+            incoming/VantaVoice-win-Setup.exe
             incoming/*.nupkg
             incoming/RELEASES
 
@@ -98,8 +100,8 @@ jobs:
           # Create downloads directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path "downloads"
           
-          # Copy latest files to downloads directory
-          Copy-Item "incoming/Setup.exe" -Destination "downloads/Setup.exe" -Force
+          # Copy latest files to downloads directory (rename Setup for easier access)
+          Copy-Item "incoming/VantaVoice-win-Setup.exe" -Destination "downloads/VantaVoice-Setup.exe" -Force
           Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
           
           # Copy all nupkg files
