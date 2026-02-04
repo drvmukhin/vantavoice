@@ -87,7 +87,7 @@ jobs:
           tag_name: ${{ github.event.client_payload.tag }}
           name: "VantaVoice ${{ github.event.client_payload.tag }}"
           body_path: release_notes.md
-          prerelease: false
+          prerelease: ${{ github.event.client_payload.prerelease }}
           make_latest: true
           files: |
             incoming/VantaVoice-win-Setup.exe
