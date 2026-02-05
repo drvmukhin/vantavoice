@@ -35,9 +35,16 @@ jobs:
       - name: List downloaded Velopack files
         run: |
           Write-Host "=== Downloaded Velopack Artifacts ==="
+          Write-Host "Contents of incoming directory:"
           Get-ChildItem incoming -Recurse | ForEach-Object { 
-            Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1MB, 2)) MB" 
+            Write-Host "  $($_.FullName) - $([math]::Round($_.Length / 1MB, 2)) MB" 
           }
+          Write-Host ""
+          Write-Host "Looking for key files:"
+          Write-Host "  Setup.exe exists: $(Test-Path 'incoming/VantaVoice-win-x64-Setup.exe')"
+          Write-Host "  RELEASES exists: $(Test-Path 'incoming/RELEASES')"
+          # Check for channel-specific RELEASES file
+          Get-ChildItem incoming -Filter "RELEASES*" | ForEach-Object { Write-Host "  Found: $($_.Name)" }
 
       # === PREPARE RELEASE NOTES ===
       - name: Prepare release notes
@@ -80,6 +87,34 @@ jobs:
           $notes | Out-File -FilePath release_notes.md -Encoding utf8
           Write-Host "Release notes prepared"
 
+      # === GENERATE RELEASES FILE FROM NUPKG ===
+      - name: Generate RELEASES file
+        run: |
+          Write-Host "=== Generating RELEASES file ==="
+          
+          # Find the nupkg file
+          $nupkg = Get-ChildItem "incoming/*.nupkg" | Select-Object -First 1
+          if (-not $nupkg) {
+            Write-Host "❌ ERROR: No .nupkg file found in incoming directory!"
+            exit 1
+          }
+          
+          Write-Host "Found nupkg: $($nupkg.Name)"
+          Write-Host "Size: $($nupkg.Length) bytes"
+          
+          # Calculate SHA1 hash (Velopack RELEASES format)
+          $hash = (Get-FileHash $nupkg.FullName -Algorithm SHA1).Hash
+          Write-Host "SHA1 hash: $hash"
+          
+          # Create RELEASES entry: SHA1 FILENAME SIZE
+          $entry = "$hash $($nupkg.Name) $($nupkg.Length)"
+          Write-Host "RELEASES entry: $entry"
+          
+          # Write to incoming/RELEASES (will be attached to GitHub Release)
+          $entry | Out-File "incoming/RELEASES" -Encoding utf8 -NoNewline
+          
+          Write-Host "✅ Generated incoming/RELEASES"
+
       # === CREATE GITHUB RELEASE ===
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -100,19 +135,40 @@ jobs:
           # Create downloads directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path "downloads"
           
-          # Copy latest files to downloads directory (keep channel name for consistency)
-          Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
-          Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
+          # Copy Setup.exe (required)
+          if (Test-Path "incoming/VantaVoice-win-x64-Setup.exe") {
+            Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
+            Write-Host "✅ Copied VantaVoice-win-x64-Setup.exe"
+          } else {
+            Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe not found!"
+            exit 1
+          }
+          
+          # Copy RELEASES file (generated in previous step)
+          if (Test-Path "incoming/RELEASES") {
+            Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
+            Write-Host "✅ Copied RELEASES"
+          } else {
+            Write-Host "❌ ERROR: RELEASES file not found - was it generated?"
+            exit 1
+          }
           
           # Copy all nupkg files
-          Get-ChildItem "incoming/*.nupkg" | ForEach-Object {
-            Copy-Item $_.FullName -Destination "downloads/$($_.Name)" -Force
+          $nupkgFiles = Get-ChildItem "incoming/*.nupkg" -ErrorAction SilentlyContinue
+          if ($nupkgFiles) {
+            foreach ($file in $nupkgFiles) {
+              Copy-Item $file.FullName -Destination "downloads/$($file.Name)" -Force
+              Write-Host "✅ Copied $($file.Name)"
+            }
+          } else {
+            Write-Host "⚠️ WARNING: No .nupkg files found"
           }
           
           # Create a version file for reference
           "${{ github.event.client_payload.tag }}" | Out-File -FilePath "downloads/LATEST_VERSION" -Encoding utf8
           
-          Write-Host "=== Downloads directory updated ==="
+          Write-Host ""
+          Write-Host "=== Downloads directory contents ==="
           Get-ChildItem downloads | ForEach-Object { Write-Host "  $($_.Name)" }
 
       - name: Commit downloads to repository
