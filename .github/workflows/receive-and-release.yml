@@ -83,14 +83,15 @@ jobs:
           *This is an automated release from the VantaVoice build system.*
           "@
           
+          
           # Save to file for the release action
           $notes | Out-File -FilePath release_notes.md -Encoding utf8
           Write-Host "Release notes prepared"
 
-      # === GENERATE RELEASES FILE FROM NUPKG ===
-      - name: Generate RELEASES file
+      # === GENERATE VELOPACK RELEASES JSON FROM NUPKG ===
+      - name: Generate releases.win-x64.json
         run: |
-          Write-Host "=== Generating RELEASES file ==="
+          Write-Host "=== Generating releases.win-x64.json (Velopack channel format) ==="
           
           # Find the nupkg file
           $nupkg = Get-ChildItem "incoming/*.nupkg" | Select-Object -First 1
@@ -102,18 +103,41 @@ jobs:
           Write-Host "Found nupkg: $($nupkg.Name)"
           Write-Host "Size: $($nupkg.Length) bytes"
           
-          # Calculate SHA1 hash (Velopack RELEASES format)
+          # Calculate SHA1 hash
           $hash = (Get-FileHash $nupkg.FullName -Algorithm SHA1).Hash
           Write-Host "SHA1 hash: $hash"
           
-          # Create RELEASES entry: SHA1 FILENAME SIZE
-          $entry = "$hash $($nupkg.Name) $($nupkg.Length)"
-          Write-Host "RELEASES entry: $entry"
+          # Extract version from nupkg filename (e.g., VantaVoice-1.8.2-beta-win-x64-full.nupkg)
+          $match = [regex]::Match($nupkg.Name, 'VantaVoice-(.+)-win-x64-full\.nupkg')
+          if ($match.Success) {
+            $version = $match.Groups[1].Value
+          } else {
+            Write-Host "⚠️ Could not parse version from filename, using tag"
+            $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
+          }
+          Write-Host "Version: $version"
           
-          # Write to incoming/RELEASES (will be attached to GitHub Release)
-          $entry | Out-File "incoming/RELEASES" -Encoding utf8 -NoNewline
+          # Create Velopack JSON release feed format
+          $releaseJson = @{
+            assets = @(
+              @{
+                PackageId = "VantaVoice"
+                Version = $version
+                Type = "Full"
+                FileName = $nupkg.Name
+                SHA1 = $hash
+                Size = $nupkg.Length
+              }
+            )
+          } | ConvertTo-Json -Depth 3
           
-          Write-Host "✅ Generated incoming/RELEASES"
+          Write-Host "Generated JSON:"
+          Write-Host $releaseJson
+          
+          # Write to incoming/releases.win-x64.json (Velopack channel format)
+          $releaseJson | Out-File "incoming/releases.win-x64.json" -Encoding utf8
+          
+          Write-Host "✅ Generated incoming/releases.win-x64.json"
 
       # === CREATE GITHUB RELEASE ===
       - name: Create GitHub Release
@@ -127,7 +151,7 @@ jobs:
           files: |
             incoming/VantaVoice-win-x64-Setup.exe
             incoming/*.nupkg
-            incoming/RELEASES
+            incoming/releases.win-x64.json
 
       # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
       - name: Update downloads directory
@@ -144,12 +168,12 @@ jobs:
             exit 1
           }
           
-          # Copy RELEASES file (generated in previous step)
-          if (Test-Path "incoming/RELEASES") {
-            Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
-            Write-Host "✅ Copied RELEASES"
+          # Copy releases.win-x64.json (Velopack channel format - generated in previous step)
+          if (Test-Path "incoming/releases.win-x64.json") {
+            Copy-Item "incoming/releases.win-x64.json" -Destination "downloads/releases.win-x64.json" -Force
+            Write-Host "✅ Copied releases.win-x64.json"
           } else {
-            Write-Host "❌ ERROR: RELEASES file not found - was it generated?"
+            Write-Host "❌ ERROR: releases.win-x64.json not found - was it generated?"
             exit 1
           }
           
