@@ -51,7 +51,7 @@ jobs:
           
           ### Quick Install
           
-          1. Download **VantaVoice-win-Setup.exe** below
+          1. Download **VantaVoice-win-x64-Setup.exe** below
           2. Run it - the installer will download and install VantaVoice
           3. Launch from Start Menu or Desktop shortcut
           
@@ -59,7 +59,7 @@ jobs:
           
           | File | Description | Size |
           |------|-------------|------|
-          | **VantaVoice-win-Setup.exe** | Windows Installer (recommended) | $setupSize |
+          | **VantaVoice-win-x64-Setup.exe** | Windows Installer (recommended) | $setupSize |
           
           ### System Requirements
           
@@ -90,7 +90,7 @@ jobs:
           prerelease: ${{ github.event.client_payload.prerelease }}
           make_latest: true
           files: |
-            incoming/VantaVoice-win-Setup.exe
+            incoming/VantaVoice-win-x64-Setup.exe
             incoming/*.nupkg
             incoming/RELEASES
 
@@ -101,7 +101,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path "downloads"
           
           # Copy latest files to downloads directory (rename Setup for easier access)
-          Copy-Item "incoming/VantaVoice-win-Setup.exe" -Destination "downloads/VantaVoice-Setup.exe" -Force
+          Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-Setup.exe" -Force
           Copy-Item "incoming/RELEASES" -Destination "downloads/RELEASES" -Force
           
           # Copy all nupkg files
