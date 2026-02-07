@@ -41,9 +41,9 @@ jobs:
           }
           Write-Host ""
           Write-Host "Looking for key files:"
-          Write-Host "  Native Setup.exe exists: $(Test-Path 'incoming/VantaVoice-win-x64-Setup.exe')"
+          Write-Host "  Native Setup.exe exists: $(Test-Path 'incoming/velopack-output/VantaVoice-win-x64-Setup.exe')"
           # Check for custom branded installer (versioned name)
-          $customInstaller = Get-ChildItem incoming -Filter "VantaVoice-v*-win-x64-Setup.exe" | Select-Object -First 1
+          $customInstaller = Get-ChildItem incoming/installer-output -Filter "VantaVoice-v*-win-x64-Setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($customInstaller) {
             Write-Host "  Custom Setup.exe exists: $($customInstaller.Name)"
           }
@@ -99,9 +99,9 @@ jobs:
           Write-Host "=== Generating releases.win-x64.json (Velopack channel format) ==="
           
           # Find the nupkg file
-          $nupkg = Get-ChildItem "incoming/*.nupkg" | Select-Object -First 1
+          $nupkg = Get-ChildItem "incoming/velopack-output/*.nupkg" | Select-Object -First 1
           if (-not $nupkg) {
-            Write-Host "? ERROR: No .nupkg file found in incoming directory!"
+            Write-Host "❌ ERROR: No .nupkg file found in incoming directory!"
             exit 1
           }
           
@@ -117,7 +117,7 @@ jobs:
           if ($match.Success) {
             $version = $match.Groups[1].Value
           } else {
-            Write-Host "?? Could not parse version from filename, using tag"
+            Write-Host "⚠️ Could not parse version from filename, using tag"
             $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
           }
           Write-Host "Version: $version"
@@ -142,7 +142,7 @@ jobs:
           # Write to incoming/releases.win-x64.json (Velopack channel format)
           $releaseJson | Out-File "incoming/releases.win-x64.json" -Encoding utf8
           
-          Write-Host "? Generated incoming/releases.win-x64.json"
+          Write-Host "✅ Generated incoming/releases.win-x64.json"
 
       # === CREATE GITHUB RELEASE ===
       - name: Create GitHub Release
@@ -154,9 +154,9 @@ jobs:
           prerelease: ${{ github.event.client_payload.prerelease }}
           make_latest: true
           files: |
-            incoming/VantaVoice-win-x64-Setup.exe
-            incoming/VantaVoice-v*-win-x64-Setup.exe
-            incoming/*.nupkg
+            incoming/velopack-output/VantaVoice-win-x64-Setup.exe
+            incoming/installer-output/VantaVoice-v*-win-x64-Setup.exe
+            incoming/velopack-output/*.nupkg
             incoming/releases.win-x64.json
 
       # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
@@ -166,41 +166,41 @@ jobs:
           New-Item -ItemType Directory -Force -Path "downloads"
           
           # Copy Native Setup.exe (required for Velopack updates)
-          if (Test-Path "incoming/VantaVoice-win-x64-Setup.exe") {
-            Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
-            Write-Host "? Copied VantaVoice-win-x64-Setup.exe (native)"
+          if (Test-Path "incoming/velopack-output/VantaVoice-win-x64-Setup.exe") {
+            Copy-Item "incoming/velopack-output/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
+            Write-Host "✅ Copied VantaVoice-win-x64-Setup.exe (native)"
           } else {
-            Write-Host "? ERROR: VantaVoice-win-x64-Setup.exe not found!"
+            Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe not found!"
             exit 1
           }
           
           # Copy Custom branded installer (if available)
-          $customInstaller = Get-ChildItem "incoming" -Filter "VantaVoice-v*-win-x64-Setup.exe" | Select-Object -First 1
+          $customInstaller = Get-ChildItem "incoming/installer-output" -Filter "VantaVoice-v*-win-x64-Setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($customInstaller) {
             Copy-Item $customInstaller.FullName -Destination "downloads/$($customInstaller.Name)" -Force
-            Write-Host "? Copied $($customInstaller.Name) (custom branded)"
+            Write-Host "✅ Copied $($customInstaller.Name) (custom branded)"
           } else {
-            Write-Host "?? WARNING: Custom branded installer not found (optional)"
+            Write-Host "⚠️ WARNING: Custom branded installer not found (optional)"
           }
           
           # Copy releases.win-x64.json (Velopack channel format - generated in previous step)
           if (Test-Path "incoming/releases.win-x64.json") {
             Copy-Item "incoming/releases.win-x64.json" -Destination "downloads/releases.win-x64.json" -Force
-            Write-Host "? Copied releases.win-x64.json"
+            Write-Host "✅ Copied releases.win-x64.json"
           } else {
-            Write-Host "? ERROR: releases.win-x64.json not found - was it generated?"
+            Write-Host "❌ ERROR: releases.win-x64.json not found - was it generated?"
             exit 1
           }
           
           # Copy all nupkg files
-          $nupkgFiles = Get-ChildItem "incoming/*.nupkg" -ErrorAction SilentlyContinue
+          $nupkgFiles = Get-ChildItem "incoming/velopack-output/*.nupkg" -ErrorAction SilentlyContinue
           if ($nupkgFiles) {
             foreach ($file in $nupkgFiles) {
               Copy-Item $file.FullName -Destination "downloads/$($file.Name)" -Force
-              Write-Host "? Copied $($file.Name)"
+              Write-Host "✅ Copied $($file.Name)"
             }
           } else {
-            Write-Host "?? WARNING: No .nupkg files found"
+            Write-Host "⚠️ WARNING: No .nupkg files found"
           }
           
           # Create a version file for reference
