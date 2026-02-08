@@ -96,7 +96,7 @@ jobs:
           # Find the nupkg file
           $nupkg = Get-ChildItem "incoming/*.nupkg" | Select-Object -First 1
           if (-not $nupkg) {
-            Write-Host "❌ ERROR: No .nupkg file found in incoming directory!"
+            Write-Host "? ERROR: No .nupkg file found in incoming directory!"
             exit 1
           }
           
@@ -112,7 +112,7 @@ jobs:
           if ($match.Success) {
             $version = $match.Groups[1].Value
           } else {
-            Write-Host "⚠️ Could not parse version from filename, using tag"
+            Write-Host "?? Could not parse version from filename, using tag"
             $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
           }
           Write-Host "Version: $version"
@@ -137,7 +137,7 @@ jobs:
           # Write to incoming/releases.win-x64.json (Velopack channel format)
           $releaseJson | Out-File "incoming/releases.win-x64.json" -Encoding utf8
           
-          Write-Host "✅ Generated incoming/releases.win-x64.json"
+          Write-Host "? Generated incoming/releases.win-x64.json"
 
       # === CREATE GITHUB RELEASE ===
       - name: Create GitHub Release
@@ -149,6 +149,7 @@ jobs:
           prerelease: ${{ github.event.client_payload.prerelease }}
           make_latest: true
           files: |
+            incoming/VantaVoice-Setup.exe
             incoming/VantaVoice-win-x64-Setup.exe
             incoming/*.nupkg
             incoming/releases.win-x64.json
@@ -156,10 +157,17 @@ jobs:
       # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
       - name: Update downloads directory
         run: |
-          # Create downloads directory if it doesn't exist
           New-Item -ItemType Directory -Force -Path "downloads"
-          
-          # Copy Setup.exe (required)
+
+          # Copy branded launcher (PRIMARY download for users)
+          if (Test-Path "incoming/VantaVoice-Setup.exe") {
+            Copy-Item "incoming/VantaVoice-Setup.exe" -Destination "downloads/VantaVoice-Setup.exe" -Force
+            Write-Host "✅ Copied VantaVoice-Setup.exe (branded launcher)"
+          } else {
+            Write-Host "⚠️ WARNING: VantaVoice-Setup.exe (branded launcher) not found"
+          }
+
+          # Copy Velopack Setup.exe (required for the launcher to download)
           if (Test-Path "incoming/VantaVoice-win-x64-Setup.exe") {
             Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
             Write-Host "✅ Copied VantaVoice-win-x64-Setup.exe"
@@ -167,16 +175,16 @@ jobs:
             Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe not found!"
             exit 1
           }
-          
-          # Copy releases.win-x64.json (Velopack channel format - generated in previous step)
+
+          # Copy releases.win-x64.json
           if (Test-Path "incoming/releases.win-x64.json") {
             Copy-Item "incoming/releases.win-x64.json" -Destination "downloads/releases.win-x64.json" -Force
             Write-Host "✅ Copied releases.win-x64.json"
           } else {
-            Write-Host "❌ ERROR: releases.win-x64.json not found - was it generated?"
+            Write-Host "❌ ERROR: releases.win-x64.json not found!"
             exit 1
           }
-          
+
           # Copy all nupkg files
           $nupkgFiles = Get-ChildItem "incoming/*.nupkg" -ErrorAction SilentlyContinue
           if ($nupkgFiles) {
@@ -184,16 +192,14 @@ jobs:
               Copy-Item $file.FullName -Destination "downloads/$($file.Name)" -Force
               Write-Host "✅ Copied $($file.Name)"
             }
-          } else {
-            Write-Host "⚠️ WARNING: No .nupkg files found"
           }
-          
-          # Create a version file for reference
+
+          # Version marker
           "${{ github.event.client_payload.tag }}" | Out-File -FilePath "downloads/LATEST_VERSION" -Encoding utf8
-          
+
           Write-Host ""
           Write-Host "=== Downloads directory contents ==="
-          Get-ChildItem downloads | ForEach-Object { Write-Host "  $($_.Name)" }
+          Get-ChildItem downloads | ForEach-Object { Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1MB, 2)) MB" }
 
       - name: Commit downloads to repository
         run: |
