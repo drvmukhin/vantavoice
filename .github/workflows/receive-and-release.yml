@@ -51,7 +51,8 @@ jobs:
         id: notes
         run: |
           $version = "${{ github.event.client_payload.tag }}"
-          $setupSize = "${{ github.event.client_payload.setup_size }}"
+          $setupX64Size = "${{ github.event.client_payload.setup_x64_size }}"
+          $setupX86Size = "${{ github.event.client_payload.setup_x86_size }}"
           
           $notes = @"
           ## VantaVoice $version - Windows Installer
@@ -66,7 +67,8 @@ jobs:
           
           | File | Description | Size |
           |------|-------------|------|
-          | **VantaVoice-win-x64-Setup.exe** | Windows Installer (recommended) | $setupSize |
+          | **VantaVoice-win-x64-Setup.exe** | Windows x64 Installer (recommended) | $setupX64Size |
+          | **VantaVoice-win-x86-Setup.exe** | Windows x86 Installer (32-bit) | $setupX86Size |
           
           ### System Requirements
           
@@ -88,56 +90,46 @@ jobs:
           $notes | Out-File -FilePath release_notes.md -Encoding utf8
           Write-Host "Release notes prepared"
 
-      # === GENERATE VELOPACK RELEASES JSON FROM NUPKG ===
-      - name: Generate releases.win-x64.json
+      # === GENERATE VELOPACK RELEASES JSON FOR EACH ARCHITECTURE ===
+      - name: Generate releases JSON for each architecture
         run: |
-          Write-Host "=== Generating releases.win-x64.json (Velopack channel format) ==="
-          
-          # Find the nupkg file
-          $nupkg = Get-ChildItem "incoming/*.nupkg" | Select-Object -First 1
-          if (-not $nupkg) {
-            Write-Host "? ERROR: No .nupkg file found in incoming directory!"
-            exit 1
+          # Process each architecture channel (x64 and x86)
+          foreach ($arch in @("win-x64", "win-x86")) {
+            Write-Host "=== Generating releases.$arch.json ==="
+            
+            $nupkg = Get-ChildItem "incoming/*-$arch-full.nupkg" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if (-not $nupkg) {
+              Write-Host "⚠️ No .nupkg found for $arch — skipping"
+              continue
+            }
+            
+            Write-Host "Found nupkg: $($nupkg.Name) ($($nupkg.Length) bytes)"
+            
+            $hash = (Get-FileHash $nupkg.FullName -Algorithm SHA1).Hash
+            
+            $match = [regex]::Match($nupkg.Name, "VantaVoice-(.+)-$arch-full\.nupkg")
+            if ($match.Success) {
+              $version = $match.Groups[1].Value
+            } else {
+              $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
+            }
+            
+            $releaseJson = @{
+              assets = @(
+                @{
+                  PackageId = "VantaVoice"
+                  Version = $version
+                  Type = "Full"
+                  FileName = $nupkg.Name
+                  SHA1 = $hash
+                  Size = $nupkg.Length
+                }
+              )
+            } | ConvertTo-Json -Depth 3
+            
+            $releaseJson | Out-File "incoming/releases.$arch.json" -Encoding utf8
+            Write-Host "✅ Generated incoming/releases.$arch.json"
           }
-          
-          Write-Host "Found nupkg: $($nupkg.Name)"
-          Write-Host "Size: $($nupkg.Length) bytes"
-          
-          # Calculate SHA1 hash
-          $hash = (Get-FileHash $nupkg.FullName -Algorithm SHA1).Hash
-          Write-Host "SHA1 hash: $hash"
-          
-          # Extract version from nupkg filename (e.g., VantaVoice-1.8.2-beta-win-x64-full.nupkg)
-          $match = [regex]::Match($nupkg.Name, 'VantaVoice-(.+)-win-x64-full\.nupkg')
-          if ($match.Success) {
-            $version = $match.Groups[1].Value
-          } else {
-            Write-Host "?? Could not parse version from filename, using tag"
-            $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
-          }
-          Write-Host "Version: $version"
-          
-          # Create Velopack JSON release feed format
-          $releaseJson = @{
-            assets = @(
-              @{
-                PackageId = "VantaVoice"
-                Version = $version
-                Type = "Full"
-                FileName = $nupkg.Name
-                SHA1 = $hash
-                Size = $nupkg.Length
-              }
-            )
-          } | ConvertTo-Json -Depth 3
-          
-          Write-Host "Generated JSON:"
-          Write-Host $releaseJson
-          
-          # Write to incoming/releases.win-x64.json (Velopack channel format)
-          $releaseJson | Out-File "incoming/releases.win-x64.json" -Encoding utf8
-          
-          Write-Host "? Generated incoming/releases.win-x64.json"
 
       # === CREATE GITHUB RELEASE ===
       - name: Create GitHub Release
@@ -151,8 +143,10 @@ jobs:
           files: |
             incoming/VantaVoice-Setup.exe
             incoming/VantaVoice-win-x64-Setup.exe
+            incoming/VantaVoice-win-x86-Setup.exe
             incoming/*.nupkg
             incoming/releases.win-x64.json
+            incoming/releases.win-x86.json
 
       # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
       - name: Update downloads directory
@@ -167,21 +161,29 @@ jobs:
             Write-Host "⚠️ WARNING: VantaVoice-Setup.exe (branded launcher) not found"
           }
 
-          # Copy Velopack Setup.exe (required for the launcher to download)
-          if (Test-Path "incoming/VantaVoice-win-x64-Setup.exe") {
-            Copy-Item "incoming/VantaVoice-win-x64-Setup.exe" -Destination "downloads/VantaVoice-win-x64-Setup.exe" -Force
-            Write-Host "✅ Copied VantaVoice-win-x64-Setup.exe"
-          } else {
-            Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe not found!"
-            exit 1
+          # Copy Velopack Setup.exe for each architecture
+          foreach ($arch in @("win-x64", "win-x86")) {
+            $setupFile = "incoming/VantaVoice-$arch-Setup.exe"
+            $jsonFile  = "incoming/releases.$arch.json"
+            
+            if (Test-Path $setupFile) {
+              Copy-Item $setupFile -Destination "downloads/VantaVoice-$arch-Setup.exe" -Force
+              Write-Host "✅ Copied VantaVoice-$arch-Setup.exe"
+            } else {
+              Write-Host "⚠️ VantaVoice-$arch-Setup.exe not found — skipping"
+            }
+            
+            if (Test-Path $jsonFile) {
+              Copy-Item $jsonFile -Destination "downloads/releases.$arch.json" -Force
+              Write-Host "✅ Copied releases.$arch.json"
+            } else {
+              Write-Host "⚠️ releases.$arch.json not found — skipping"
+            }
           }
-
-          # Copy releases.win-x64.json
-          if (Test-Path "incoming/releases.win-x64.json") {
-            Copy-Item "incoming/releases.win-x64.json" -Destination "downloads/releases.win-x64.json" -Force
-            Write-Host "✅ Copied releases.win-x64.json"
-          } else {
-            Write-Host "❌ ERROR: releases.win-x64.json not found!"
+          
+          # Ensure at least x64 is present (required)
+          if (-not (Test-Path "downloads/VantaVoice-win-x64-Setup.exe")) {
+            Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe is required!"
             exit 1
           }
 
