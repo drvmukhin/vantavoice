@@ -1,12 +1,12 @@
 {
   "assets": [
     {
-      "SHA1": "E41F43E3A42ADA22B7AF0CA63D5374013FDBF826",
+      "Size": 78444955,
+      "Version": "1.8.13",
       "Type": "Full",
-      "Version": "1.8.13-beta",
-      "FileName": "VantaVoice-1.8.13-beta-win-x86-full.nupkg",
       "PackageId": "VantaVoice",
-      "Size": 78444701
+      "SHA1": "D1BA12B8442285A29C6A78DF49F2B9FCD91BBE55",
+      "FileName": "VantaVoice-1.8.13-win-x86-full.nupkg"
     }
   ]
 }
