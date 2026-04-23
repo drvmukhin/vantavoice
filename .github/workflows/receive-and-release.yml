@@ -1,238 +1,87 @@
 name: Receive and Release (Public Distribution)
 
-# This workflow runs in the PUBLIC vantavoice repository
-# It receives Velopack distribution artifacts from the private GamerAssist repo
-# and publishes them for public download and auto-updates
+# This workflow runs in the PUBLIC vantavoice repository.
+#
+# Distribution model (post R2 migration):
+#   - All binaries (Setup.exe, *.nupkg, releases.win-*.json) live in application CDN
+#     are served via https://vantavoice.cdn.papagood.net.
+#   - This repository ONLY publishes a lightweight GitHub Release for visibility,
+#     pointing users and tooling to the R2 download URLs.
+#   - No binaries are committed to this repository tree (no `downloads/` writes).
+#   - No binaries are attached as Release assets, so GitHub-generated
+#     "Source code (zip|tar.gz)" archives stay small.
 
 on:
   repository_dispatch:
     types: [publish-public-dist]
 
 permissions:
-  contents: write    # allow creating releases and uploading assets
+  contents: write    # required only to create the release record
 
 jobs:
   release:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
-      # === CHECKOUT REPOSITORY ===
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # === DOWNLOAD VELOPACK ARTIFACTS FROM GAMERASSIST ===
-      - name: Download Velopack artifacts from GamerAssist
-        uses: dawidd6/action-download-artifact@v3
-        with:
-          repo: drvmukhin/GamerAssist
-          github_token: ${{ secrets.DIST_PAT }}
-          run_id: ${{ github.event.client_payload.run_id }}
-          name: ${{ github.event.client_payload.velopack_artifact }}
-          path: incoming
-
-      - name: List downloaded Velopack files
+      - name: Determine R2 stability channel
+        id: channel
         run: |
-          Write-Host "=== Downloaded Velopack Artifacts ==="
-          Write-Host "Contents of incoming directory:"
-          Get-ChildItem incoming -Recurse | ForEach-Object { 
-            Write-Host "  $($_.FullName) - $([math]::Round($_.Length / 1MB, 2)) MB" 
-          }
-          Write-Host ""
-          Write-Host "Looking for key files:"
-          Write-Host "  Setup.exe exists: $(Test-Path 'incoming/VantaVoice-win-x64-Setup.exe')"
-          Write-Host "  RELEASES exists: $(Test-Path 'incoming/RELEASES')"
-          # Check for channel-specific RELEASES file
-          Get-ChildItem incoming -Filter "RELEASES*" | ForEach-Object { Write-Host "  Found: $($_.Name)" }
+          if [[ "${{ github.event.client_payload.prerelease }}" == "true" ]]; then
+            echo "channel=beta" >> $GITHUB_OUTPUT
+          else
+            echo "channel=stable" >> $GITHUB_OUTPUT
+          fi
 
-      # === PREPARE RELEASE NOTES ===
-      - name: Prepare release notes
+      - name: Prepare release notes (R2 download links only)
         id: notes
+        env:
+          TAG:           ${{ github.event.client_payload.tag }}
+          CHANNEL:       ${{ steps.channel.outputs.channel }}
+          SETUP_X64:     ${{ github.event.client_payload.setup_x64_size }}
+          SETUP_X86:     ${{ github.event.client_payload.setup_x86_size }}
+          HIGHLIGHTS:    ${{ github.event.client_payload.highlights }}
+          R2_BASE:       https://vantavoice.cdn.papagood.net
         run: |
-          $version = "${{ github.event.client_payload.tag }}"
-          $setupX64Size = "${{ github.event.client_payload.setup_x64_size }}"
-          $setupX86Size = "${{ github.event.client_payload.setup_x86_size }}"
-          
-          $notes = @"
-          ## VantaVoice $version - Windows Installer
-          
-          ### Quick Install
-          
-          1. Download **VantaVoice-win-x64-Setup.exe** below
-          2. Run it - the installer will download and install VantaVoice
-          3. Launch from Start Menu or Desktop shortcut
-          
-          ### Downloads
-          
-          | File | Description | Size |
-          |------|-------------|------|
-          | **VantaVoice-win-x64-Setup.exe** | Windows x64 Installer (recommended) | $setupX64Size |
-          | **VantaVoice-win-x86-Setup.exe** | Windows x86 Installer (32-bit) | $setupX86Size |
-          
-          ### System Requirements
-          
-          - **OS**: Windows 10/11 (64-bit)
-          - **RAM**: 4GB minimum
-          - **Storage**: ~200MB
-          
-          ### Auto-Updates
-          
-          VantaVoice automatically checks for updates and notifies you when a new version is available.
-          
+          cat > release_notes.md <<EOF
+          ## VantaVoice ${TAG}
+
+          All artifacts for this release are hosted on Vanta Voice CDN.
+          GitHub Release is informational only and does not contain binaries.
+
+          ### Primary download (recommended)
+          - Branded launcher: ${R2_BASE}/${CHANNEL}/VantaVoice-Setup.exe
+
+          ### Direct installers
+          - Windows x64 (~${SETUP_X64}): ${R2_BASE}/${CHANNEL}/VantaVoice-win-x64-Setup.exe
+          - Windows x86 (~${SETUP_X86}): ${R2_BASE}/${CHANNEL}/VantaVoice-win-x86-Setup.exe
+
+          ### Update feed (consumed by in-app updater)
+          - ${R2_BASE}/${CHANNEL}/releases.win-x64.json
+          - ${R2_BASE}/${CHANNEL}/releases.win-x86.json
+
+          ### Immutable per-version archive
+          - ${R2_BASE}/releases/${TAG}/
+
+          EOF
+
+          # Append "What's New" + "Known Issues" sourced from GamerAssist release.yml
+          if [[ -n "${HIGHLIGHTS}" ]]; then
+            printf '%s\n' "${HIGHLIGHTS}" >> release_notes.md
+            echo "" >> release_notes.md
+          fi
+
+          cat >> release_notes.md <<EOF
           ---
-          
-          *This is an automated release from the VantaVoice build system.*
-          "@
-          
-          
-          # Save to file for the release action
-          $notes | Out-File -FilePath release_notes.md -Encoding utf8
-          Write-Host "Release notes prepared"
+          Channel: \`${CHANNEL}\`
+          Source repo (private): drvmukhin/GamerAssist
+          EOF
 
-      # === GENERATE VELOPACK RELEASES JSON FOR EACH ARCHITECTURE ===
-      - name: Generate releases JSON for each architecture
-        run: |
-          # Process each architecture channel (x64 and x86)
-          foreach ($arch in @("win-x64", "win-x86")) {
-            Write-Host "=== Generating releases.$arch.json ==="
-            
-            $nupkg = Get-ChildItem "incoming/*-$arch-full.nupkg" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $nupkg) {
-              Write-Host "⚠️ No .nupkg found for $arch — skipping"
-              continue
-            }
-            
-            Write-Host "Found nupkg: $($nupkg.Name) ($($nupkg.Length) bytes)"
-            
-            $hash = (Get-FileHash $nupkg.FullName -Algorithm SHA1).Hash
-            
-            $match = [regex]::Match($nupkg.Name, "VantaVoice-(.+)-$arch-full\.nupkg")
-            if ($match.Success) {
-              $version = $match.Groups[1].Value
-            } else {
-              $version = "${{ github.event.client_payload.tag }}".TrimStart('v')
-            }
-            
-            $releaseJson = @{
-              assets = @(
-                @{
-                  PackageId = "VantaVoice"
-                  Version = $version
-                  Type = "Full"
-                  FileName = $nupkg.Name
-                  SHA1 = $hash
-                  Size = $nupkg.Length
-                }
-              )
-            } | ConvertTo-Json -Depth 3
-            
-            $releaseJson | Out-File "incoming/releases.$arch.json" -Encoding utf8
-            Write-Host "✅ Generated incoming/releases.$arch.json"
-          }
-
-      # === CREATE GITHUB RELEASE ===
-      - name: Create GitHub Release
+      - name: Create GitHub Release (metadata only, no binary assets)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.client_payload.tag }}
-          name: "VantaVoice ${{ github.event.client_payload.tag }}"
-          body_path: release_notes.md
-          prerelease: ${{ github.event.client_payload.prerelease }}
+          tag_name:    ${{ github.event.client_payload.tag }}
+          name:        "VantaVoice ${{ github.event.client_payload.tag }}"
+          body_path:   release_notes.md
+          prerelease:  ${{ github.event.client_payload.prerelease }}
           make_latest: true
-          files: |
-            incoming/VantaVoice-Setup.exe
-            incoming/VantaVoice-win-x64-Setup.exe
-            incoming/VantaVoice-win-x86-Setup.exe
-            incoming/*.nupkg
-            incoming/releases.win-x64.json
-            incoming/releases.win-x86.json
-
-      # === UPDATE DOWNLOADS DIRECTORY (for direct linking) ===
-      - name: Update downloads directory
-        run: |
-          New-Item -ItemType Directory -Force -Path "downloads"
-
-          # Copy branded launcher (PRIMARY download for users)
-          if (Test-Path "incoming/VantaVoice-Setup.exe") {
-            Copy-Item "incoming/VantaVoice-Setup.exe" -Destination "downloads/VantaVoice-Setup.exe" -Force
-            Write-Host "✅ Copied VantaVoice-Setup.exe (branded launcher)"
-          } else {
-            Write-Host "⚠️ WARNING: VantaVoice-Setup.exe (branded launcher) not found"
-          }
-
-          # Copy Velopack Setup.exe for each architecture
-          foreach ($arch in @("win-x64", "win-x86")) {
-            $setupFile = "incoming/VantaVoice-$arch-Setup.exe"
-            $jsonFile  = "incoming/releases.$arch.json"
-            
-            if (Test-Path $setupFile) {
-              Copy-Item $setupFile -Destination "downloads/VantaVoice-$arch-Setup.exe" -Force
-              Write-Host "✅ Copied VantaVoice-$arch-Setup.exe"
-            } else {
-              Write-Host "⚠️ VantaVoice-$arch-Setup.exe not found — skipping"
-            }
-            
-            if (Test-Path $jsonFile) {
-              Copy-Item $jsonFile -Destination "downloads/releases.$arch.json" -Force
-              Write-Host "✅ Copied releases.$arch.json"
-            } else {
-              Write-Host "⚠️ releases.$arch.json not found — skipping"
-            }
-          }
-          
-          # Ensure at least x64 is present (required)
-          if (-not (Test-Path "downloads/VantaVoice-win-x64-Setup.exe")) {
-            Write-Host "❌ ERROR: VantaVoice-win-x64-Setup.exe is required!"
-            exit 1
-          }
-
-          # Copy all nupkg files
-          $nupkgFiles = Get-ChildItem "incoming/*.nupkg" -ErrorAction SilentlyContinue
-          if ($nupkgFiles) {
-            foreach ($file in $nupkgFiles) {
-              Copy-Item $file.FullName -Destination "downloads/$($file.Name)" -Force
-              Write-Host "✅ Copied $($file.Name)"
-            }
-          }
-
-          # Version marker
-          "${{ github.event.client_payload.tag }}" | Out-File -FilePath "downloads/LATEST_VERSION" -Encoding utf8
-
-          Write-Host ""
-          Write-Host "=== Downloads directory contents ==="
-          Get-ChildItem downloads | ForEach-Object { Write-Host "  $($_.Name) - $([math]::Round($_.Length / 1MB, 2)) MB" }
-
-      - name: Commit downloads to repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          
-          git add downloads/
-          
-          # Check if there are changes to commit
-          $changes = git status --porcelain
-          if ($changes) {
-            git commit -m "Update downloads to ${{ github.event.client_payload.tag }}"
-            git push
-            Write-Host "Downloads committed and pushed"
-          } else {
-            Write-Host "No changes to commit"
-          }
-
-      - name: Summary
-        run: |
-          Write-Host ""
-          Write-Host "=========================================="
-          Write-Host "  RELEASE PUBLISHED SUCCESSFULLY"
-          Write-Host "=========================================="
-          Write-Host ""
-          Write-Host "Version: ${{ github.event.client_payload.tag }}"
-          Write-Host ""
-          Write-Host "Download URLs:"
-          Write-Host "  - GitHub Release: https://github.com/drvmukhin/vantavoice/releases/tag/${{ github.event.client_payload.tag }}"
-          Write-Host "  - Direct Setup.exe: https://github.com/drvmukhin/vantavoice/releases/download/${{ github.event.client_payload.tag }}/VantaVoice-win-x64-Setup.exe"
-          Write-Host ""
-          Write-Host "Raw downloads (for Velopack):"
-          Write-Host "  - https://raw.githubusercontent.com/drvmukhin/vantavoice/main/downloads/RELEASES"
-          Write-Host ""
+          # Intentionally no `files:` — binaries live in R2.
